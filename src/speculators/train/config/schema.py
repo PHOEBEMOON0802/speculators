@@ -651,9 +651,12 @@ _GROUPS: dict[str, type[_Group]] = {
 # falls back to the generic default below.
 _DEFAULT_LOSS_FN: dict[str, str] = {
     "dflash": "ce",
+    "dcore": "ce",
     "xpress": '{"ce": 0.1, "tv": 0.9}',
 }
-_DEFAULT_BLOCK_SIZE: dict[str, int] = {"dflash": 16, "xpress": 16}
+# DCore defaults to block_size=8 to align with the released
+# ernie-research/DCore-*-Budget8 checkpoints; pass --block-size 16 for Budget16.
+_DEFAULT_BLOCK_SIZE: dict[str, int] = {"dflash": 16, "xpress": 16, "dcore": 8}
 
 
 class TrainConfig(BaseSettings):
@@ -734,7 +737,7 @@ class TrainConfig(BaseSettings):
     speculator_type: str = Field(
         default="eagle3",
         description="Type of speculator model to train "
-        "(eagle3, dflash, dflash2, dspark, xpress, peagle, mtp).",
+        "(eagle3, dflash, dcore, dflash2, dspark, xpress, peagle, mtp).",
     )
     dry_run: bool = Field(
         default=False,
@@ -772,10 +775,11 @@ class TrainConfig(BaseSettings):
         ``qwen3``; unset ``norm_before_fc`` / ``norm_output`` -> ``True`` for eagle3
         else ``False``; unset ``muon_lr`` -> ``lr``; unset ``num_layers`` -> ``5``
         for dflash/dspark/dflash2/xpress else ``1``; unset
-        ``per_position_loss_weight`` -> ``dpace`` for dflash else
-        ``fixed-exp-decay``; unset ``loss_fn`` -> ``ce`` for dflash,
+        ``per_position_loss_weight`` -> ``dpace`` for dflash/dcore else
+        ``fixed-exp-decay``; unset ``loss_fn`` -> ``ce`` for dflash/dcore,
         ``{"ce": 0.1, "tv": 0.9}`` for xpress, else ``kl_div``; unset
-        ``block_size`` -> ``16`` for dflash and xpress else ``8``.
+        ``block_size`` -> ``16`` for dflash and xpress, ``8`` for dcore
+        (aligning with the released Budget8 checkpoints), else ``8``.
 
         The dflash-conditional defaults reflect the recipe from
         https://github.com/vllm-project/speculators/issues/979: this combination
@@ -797,13 +801,16 @@ class TrainConfig(BaseSettings):
         untouched, so :meth:`from_flat` round-trips.
         """
         is_eagle3 = self.speculator_type == "eagle3"
-        is_dflash = self.speculator_type == "dflash"
         is_dflash_family = self.speculator_type in {
             "dflash",
+            "dcore",
             "dspark",
             "dflash2",
             "xpress",
         }
+        # DCore shares the dflash group and the RFC #979 recipe (D-PACE + CE);
+        # its released checkpoints train with the same objective.
+        uses_dpace_default = self.speculator_type in {"dflash", "dcore"}
         if self.draft.draft_arch is None:
             self.draft.draft_arch = "llama" if is_eagle3 else "qwen3"
         if self.draft.norm_before_fc is None:
@@ -818,7 +825,7 @@ class TrainConfig(BaseSettings):
             self.draft.num_layers = 5 if is_dflash_family else 1
         if self.dflash.per_position_loss_weight is None:
             self.dflash.per_position_loss_weight = (
-                "dpace" if is_dflash else "fixed-exp-decay"
+                "dpace" if uses_dpace_default else "fixed-exp-decay"
             )
         if self.loss.loss_fn is None:
             self.loss.loss_fn = _DEFAULT_LOSS_FN.get(self.speculator_type, "kl_div")

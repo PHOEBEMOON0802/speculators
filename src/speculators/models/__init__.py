@@ -1,5 +1,6 @@
 from speculators.models.attention import ALL_ATTENTION_FUNCTIONS  # noqa: F401
 
+from .dcore import DCoreDraftModel, DCoreSpeculatorConfig
 from .dflash import DFlashDraftModel, DFlashSpeculatorConfig
 from .dflash2 import DFlash2DraftModel, DFlash2SpeculatorConfig
 from .dspark import DSparkDraftModel, DSparkSpeculatorConfig
@@ -9,6 +10,8 @@ from .peagle import PEagleDraftModel, PEagleSpeculatorConfig
 from .xpress import XPressDraftModel, XPressSpeculatorConfig
 
 __all__ = [
+    "DCoreDraftModel",
+    "DCoreSpeculatorConfig",
     "DFlash2DraftModel",
     "DFlash2SpeculatorConfig",
     "DFlashDraftModel",

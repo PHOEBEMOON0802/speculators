@@ -94,6 +94,16 @@ class Qwen3DFlashAttention(nn.Module):
             else None
         )
 
+    def _project_context(
+        self, target_hidden: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Project the injected target context into keys and values.
+
+        DFlash shares the block-token projections; variants with dedicated
+        context projections (e.g. DCore's heterogeneous KV) override this.
+        """
+        return self.k_proj(target_hidden), self.v_proj(target_hidden)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -113,9 +123,8 @@ class Qwen3DFlashAttention(nn.Module):
         q = q.view(bsz, q_len, -1, self.head_dim)
         q = self.q_norm(q).transpose(1, 2)
         # This is the main difference from the usual attention mechanism.
-        k_ctx = self.k_proj(target_hidden)
+        k_ctx, v_ctx = self._project_context(target_hidden)
         k_noise = self.k_proj(hidden_states)
-        v_ctx = self.v_proj(target_hidden)
         v_noise = self.v_proj(hidden_states)
         k = torch.cat([k_ctx, k_noise], dim=1).view(
             bsz, ctx_len + q_len, -1, self.head_dim
@@ -156,10 +165,14 @@ class Qwen3DFlashAttention(nn.Module):
 
 
 class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
+    # Overridable so DFlash variants can swap in their own attention module
+    # without rebuilding the rest of the layer (e.g. DCore's heterogeneous KV).
+    attention_class: type[nn.Module] = Qwen3DFlashAttention
+
     def __init__(self, config: Qwen3Config, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.self_attn = Qwen3DFlashAttention(config=config, layer_idx=layer_idx)
+        self.self_attn = self.attention_class(config=config, layer_idx=layer_idx)
         self.mlp = Qwen3MLP(config)
         self.input_layernorm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)  # type: ignore[arg-type]
         self.post_attention_layernorm = Qwen3RMSNorm(

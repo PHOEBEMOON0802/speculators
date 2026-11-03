@@ -38,7 +38,8 @@ _compiled_create_block_mask = torch.compile(create_block_mask)
 @SpeculatorModel.register("dflash")
 class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
     config_class: ClassVar[type[DFlashSpeculatorConfig]] = DFlashSpeculatorConfig  # type: ignore[misc]
-    supports_gradient_checkpointing = True  # noqa: D003  # Qwen3DFlashDecoderLayer inherits GradientCheckpointingLayer
+    # Qwen3DFlashDecoderLayer inherits GradientCheckpointingLayer
+    supports_gradient_checkpointing = True
     _no_split_modules = ["Qwen3DFlashDecoderLayer"]
     _keys_to_ignore_on_load_missing: ClassVar[list[str]] = [  # type: ignore[misc]
         "embed_tokens.weight",
@@ -374,6 +375,18 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
 
         return full_attn_mask, sliding_window_attn_mask, anchor_positions, anchor_valid
 
+    def _fuse_target_hidden(
+        self, hidden_states: torch.Tensor
+    ) -> torch.Tensor | list[torch.Tensor]:
+        """Fuse the concatenated target hidden states into the draft context.
+
+        DFlash projects the ``[1, L, T*d]`` concatenation through a shared FC
+        into one ``[1, L, d]`` context used by every draft layer. Variants with
+        per-draft-layer fusion (e.g. DCore) override this and return one tensor
+        per draft layer instead.
+        """
+        return self.hidden_norm(self.fc(hidden_states))
+
     def _backbone_forward(
         self,
         hidden_states: torch.Tensor,  # [1, total_seq_len, num_hidden*hidden_size]
@@ -415,9 +428,9 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
         noise_embedding = self.embed_tokens(mask_token_ids)
         # shape: [1, num_anchors*block_size, hidden_size]
 
-        fc_output = self.fc(hidden_states)
-        fc_output = self.hidden_norm(fc_output)
-        # shape: [1, total_seq_len, hidden_size]
+        fused_target_hidden = self._fuse_target_hidden(hidden_states)
+        # shape: [1, total_seq_len, hidden_size] (or one such tensor per draft
+        # layer for per-layer fusion variants)
 
         mask_position_ids = get_base_indices_for_anchored_blocks(
             position_ids[0, anchor_positions], self.block_size
@@ -452,10 +465,13 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
                 targets = verifier_logits[:, anchored_block_indices]
             # shape: [1, num_anchors*block_size, draft_vocab_size]
 
+        per_layer_fusion = isinstance(fused_target_hidden, (list, tuple))
         for layer_idx, layer in enumerate(self.layers):
             noise_embedding = layer(
                 hidden_states=noise_embedding,
-                target_hidden=fc_output,
+                target_hidden=fused_target_hidden[layer_idx]
+                if per_layer_fusion
+                else fused_target_hidden,
                 attention_mask=sliding_window_attn_mask
                 if layer_idx in self.sliding_window_indices
                 else full_attn_mask,

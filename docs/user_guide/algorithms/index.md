@@ -1,6 +1,6 @@
 # Algorithms
 
-Speculators supports seven speculative decoding algorithms. All are lossless -- they produce output from the same distribution as the target model.
+Speculators supports eight speculative decoding algorithms. All are lossless -- they produce output from the same distribution as the target model.
 
 ## [Eagle-3](eagle3.md)
 
@@ -13,6 +13,10 @@ Extends Eagle-3 with parallel multi-token prediction across multiple depths, usi
 ## [DFlash](dflash.md)
 
 Predicts all draft tokens in a single forward pass using block-based prediction with Qwen3-style draft layers. Newer, with support improving rapidly.
+
+## [DCore](dcore.md)
+
+Combines the DFlash backbone with DFlare's per-draft-layer target context mixture and heterogeneous KV projections, trained with the D-PACE objective. Weight-compatible with the released `ernie-research/DCore-*` checkpoints.
 
 ## [DFlash2](dflash2.md)
 

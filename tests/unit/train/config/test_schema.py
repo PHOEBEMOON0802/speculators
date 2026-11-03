@@ -62,6 +62,18 @@ def test_flatten_resolves_dflash_derived_defaults():
     assert flat["sliding_window_non_causal"] is False
 
 
+def test_flatten_resolves_dcore_derived_defaults():
+    # DCore shares the dflash recipe (5 layers, D-PACE, CE) but defaults to
+    # block_size=8 to align with the released ernie-research/DCore-*-Budget8
+    # checkpoints.
+    flat = TrainConfig(speculator_type="dcore").flatten()
+    assert flat["num_layers"] == 5
+    assert flat["per_position_loss_weight"] == "dpace"
+    assert flat["loss_fn"] == "ce"
+    assert flat["block_size"] == 8
+    assert flat["sliding_window_non_causal"] is False
+
+
 def test_flatten_resolves_dflash2_derived_defaults():
     flat = TrainConfig(speculator_type="dflash2").flatten()
     assert flat["num_layers"] == 5
