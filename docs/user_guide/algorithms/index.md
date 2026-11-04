@@ -1,6 +1,6 @@
 # Algorithms
 
-Speculators supports eight speculative decoding algorithms. All are lossless -- they produce output from the same distribution as the target model.
+Speculators supports nine speculative decoding algorithms. All are lossless -- they produce output from the same distribution as the target model.
 
 ## [Eagle-3](eagle3.md)
 
@@ -21,6 +21,10 @@ Combines the DFlash backbone with DFlare's per-draft-layer target context mixtur
 ## [DFlash2](dflash2.md)
 
 Adds local dynamic convolutions and a predecessor-conditioned candidate selector to DFlash while retaining one parallel draft-model forward pass. Experimental training support.
+
+## [D-MTP](dmtp.md)
+
+Lets the verifier's frozen native MTP module propose the first block token while the DFlash backbone continues the block in parallel, joined by a small token/hidden fusion module. Requires a verifier with native MTP weights.
 
 ## [DSpark](dspark.md)
 

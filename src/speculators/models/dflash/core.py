@@ -375,6 +375,22 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
 
         return full_attn_mask, sliding_window_attn_mask, anchor_positions, anchor_valid
 
+    def _build_noise_embedding(
+        self,
+        mask_token_ids: torch.Tensor,  # [1, num_anchors*block_size]
+        input_ids: torch.Tensor,  # [1, total_seq_len]  # noqa: ARG002
+        anchor_positions: torch.Tensor,  # [num_anchors]  # noqa: ARG002
+        verifier_last_hidden_states: torch.Tensor,  # [1, L, hidden]  # noqa: ARG002
+        position_ids: torch.Tensor,  # [1, total_seq_len]  # noqa: ARG002
+    ) -> torch.Tensor:
+        """Embed the draft block tokens (anchor + mask placeholders).
+
+        DFlash embeds the block tokens directly. Variants that replace block
+        slots with computed embeddings (e.g. D-MTP's fused T1 slot) override
+        this; the extra arguments carry everything needed to derive them.
+        """
+        return self.embed_tokens(mask_token_ids)
+
     def _fuse_target_hidden(
         self, hidden_states: torch.Tensor
     ) -> torch.Tensor | list[torch.Tensor]:
@@ -425,7 +441,13 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
             device=device,
         )  # shape: [1, num_anchors*block_size]
         mask_token_ids[:, :: self.block_size] = input_ids[:, anchor_positions]
-        noise_embedding = self.embed_tokens(mask_token_ids)
+        noise_embedding = self._build_noise_embedding(
+            mask_token_ids,
+            input_ids=input_ids,
+            anchor_positions=anchor_positions,
+            verifier_last_hidden_states=verifier_last_hidden_states,
+            position_ids=position_ids,
+        )
         # shape: [1, num_anchors*block_size, hidden_size]
 
         fused_target_hidden = self._fuse_target_hidden(hidden_states)

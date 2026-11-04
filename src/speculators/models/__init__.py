@@ -3,6 +3,7 @@ from speculators.models.attention import ALL_ATTENTION_FUNCTIONS  # noqa: F401
 from .dcore import DCoreDraftModel, DCoreSpeculatorConfig
 from .dflash import DFlashDraftModel, DFlashSpeculatorConfig
 from .dflash2 import DFlash2DraftModel, DFlash2SpeculatorConfig
+from .dmtp import DMTPDraftModel, DMTPSpeculatorConfig
 from .dspark import DSparkDraftModel, DSparkSpeculatorConfig
 from .eagle3 import Eagle3DraftModel, Eagle3SpeculatorConfig
 from .mtp import MTPDraftModel, MTPSpeculatorConfig
@@ -16,6 +17,8 @@ __all__ = [
     "DFlash2SpeculatorConfig",
     "DFlashDraftModel",
     "DFlashSpeculatorConfig",
+    "DMTPDraftModel",
+    "DMTPSpeculatorConfig",
     "DSparkDraftModel",
     "DSparkSpeculatorConfig",
     "Eagle3DraftModel",

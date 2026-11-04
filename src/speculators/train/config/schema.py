@@ -652,6 +652,7 @@ _GROUPS: dict[str, type[_Group]] = {
 _DEFAULT_LOSS_FN: dict[str, str] = {
     "dflash": "ce",
     "dcore": "ce",
+    "dmtp": "ce",
     "xpress": '{"ce": 0.1, "tv": 0.9}',
 }
 # DCore defaults to block_size=8 to align with the released
@@ -737,7 +738,7 @@ class TrainConfig(BaseSettings):
     speculator_type: str = Field(
         default="eagle3",
         description="Type of speculator model to train "
-        "(eagle3, dflash, dcore, dflash2, dspark, xpress, peagle, mtp).",
+        "(eagle3, dflash, dcore, dflash2, dmtp, dspark, xpress, peagle, mtp).",
     )
     dry_run: bool = Field(
         default=False,
@@ -804,6 +805,7 @@ class TrainConfig(BaseSettings):
         is_dflash_family = self.speculator_type in {
             "dflash",
             "dcore",
+            "dmtp",
             "dspark",
             "dflash2",
             "xpress",
