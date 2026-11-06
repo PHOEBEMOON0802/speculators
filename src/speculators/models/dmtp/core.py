@@ -27,36 +27,39 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DMTPDraftModel",
+    "MTPFirstTokenMixin",
 ]
 
 _MIN_BLOCK_SIZE = 2  # anchor slot + T1 slot
 
 
-@SpeculatorModel.register("dmtp")
-class DMTPDraftModel(DFlashDraftModel):
-    """DFlash backbone whose block starts from a frozen-MTP-proposed token.
+class MTPFirstTokenMixin:
+    """D-MTP's frozen-MTP first-token path, reusable over any DFlash backbone.
 
-    Implements D-MTP (https://sylvan820.github.io/D-MTP/) with the two-anchor
-    block layout ``[A, T1, MASK x (B-2)]``: slot 0 is the committed anchor
-    (standard DFlash), slot 1 holds the ground-truth T1 token whose embedding
-    is replaced by ``fusion(e_T1, h_MTP)`` -- h_MTP being the frozen MTP
-    block's hidden state that *predicted* T1 -- and slots 2..B-1 are mask
-    placeholders trained with the usual position-decayed objective. Slots 0
-    and 1 receive no draft loss. The verifier, its MTP block, and the LM head
-    stay frozen; only the DFlash layers and the fusion module train.
+    Adds a frozen MTP block (built from the verifier's architecture, weights
+    extracted from its native ``mtp.*`` keys) plus the token/hidden fusion
+    module, and overrides ``_build_noise_embedding`` so block slot 1 carries
+    ``fusion(e_T1, h_MTP)`` in the two-anchor layout ``[A, T1, MASK x (B-2)]``.
+    Concrete classes call :meth:`_validate_dmtp_config` before ``__init__``
+    and :meth:`_init_mtp_first_token` after the backbone is built. DMTP pairs
+    it with the plain DFlash backbone; DMTP2 with the DFlash2 backbone.
     """
 
-    config_class: ClassVar[type[DMTPSpeculatorConfig]] = DMTPSpeculatorConfig  # type: ignore[misc,assignment]
+    # Provided by the DFlash backbone
+    config: DMTPSpeculatorConfig
+    block_size: int
+    embed_tokens: nn.Module
 
-    def __init__(self, config: DMTPSpeculatorConfig) -> None:
+    @staticmethod
+    def _validate_dmtp_config(config: DMTPSpeculatorConfig) -> None:
         if config.block_size < _MIN_BLOCK_SIZE:
             raise ValueError(
-                f"DMTP requires block_size >= {_MIN_BLOCK_SIZE} (anchor + T1), "
+                f"D-MTP requires block_size >= {_MIN_BLOCK_SIZE} (anchor + T1), "
                 f"got {config.block_size}."
             )
         if config.sample_from_anchor:
             raise ValueError(
-                "DMTP uses the [anchor, T1, masks] block layout and does not "
+                "D-MTP uses the [anchor, T1, masks] block layout and does not "
                 "support sample_from_anchor=True."
             )
         mtp_tc = config.mtp_transformer_config
@@ -67,8 +70,9 @@ class DMTPDraftModel(DFlashDraftModel):
                 f"({mtp_tc.hidden_size}) must match the draft hidden size "
                 f"({draft_hidden})."
             )
-        super().__init__(config=config)
 
+    def _init_mtp_first_token(self, config: DMTPSpeculatorConfig) -> None:
+        mtp_tc = config.mtp_transformer_config
         # eager OOMs on long sequences for the full-attention MTP block (#886).
         if mtp_tc._attn_implementation is None:  # noqa: SLF001
             mtp_tc._attn_implementation = "sdpa"  # noqa: SLF001
@@ -84,9 +88,38 @@ class DMTPDraftModel(DFlashDraftModel):
         )
         self.mtp_layers.requires_grad_(False)
         self.fusion = MTPTokenFusion(
-            hidden_size=draft_hidden,
+            hidden_size=config.transformer_layer_config.hidden_size,
             rms_norm_eps=config.transformer_layer_config.rms_norm_eps,
         )
+
+    @classmethod
+    def _resolve_mtp_transformer_config(cls, kwargs: dict) -> PretrainedConfig:
+        """The verifier's decoder config, which the frozen MTP block is built from."""
+        return get_verifier_config(
+            kwargs["verifier_name_or_path"],
+            trust_remote_code=kwargs.get("trust_remote_code", False),
+        )
+
+    @staticmethod
+    def _load_frozen_mtp_weights(model, verifier_name_or_path: str) -> None:
+        """Extract the verifier's native mtp.* weights into the frozen block."""
+        from speculators.convert.mtp.converter import MTPConverter  # noqa: PLC0415
+
+        mtp_state_dict = MTPConverter().convert_to_state_dict(verifier_name_or_path)
+        _, unexpected = model.load_state_dict(mtp_state_dict, strict=False)
+        if unexpected:
+            raise ValueError(
+                f"Verifier MTP weights contain unexpected keys: {unexpected}"
+            )
+        loaded = set(mtp_state_dict)
+        not_loaded = [
+            name
+            for name, _ in model.mtp_layers.named_parameters(prefix="mtp_layers")
+            if name not in loaded
+        ]
+        if not_loaded:
+            raise ValueError(f"Verifier MTP weights are missing keys for: {not_loaded}")
+        model.mtp_layers.requires_grad_(False)
 
     @torch.no_grad()
     def _compute_mtp_hidden(
@@ -152,6 +185,28 @@ class DMTPDraftModel(DFlashDraftModel):
         noise_embedding[:, 1 :: self.block_size] = fused
         return noise_embedding
 
+
+@SpeculatorModel.register("dmtp")
+class DMTPDraftModel(MTPFirstTokenMixin, DFlashDraftModel):
+    """DFlash backbone whose block starts from a frozen-MTP-proposed token.
+
+    Implements D-MTP (https://sylvan820.github.io/D-MTP/) with the two-anchor
+    block layout ``[A, T1, MASK x (B-2)]``: slot 0 is the committed anchor
+    (standard DFlash), slot 1 holds the ground-truth T1 token whose embedding
+    is replaced by ``fusion(e_T1, h_MTP)`` -- h_MTP being the frozen MTP
+    block's hidden state that *predicted* T1 -- and slots 2..B-1 are mask
+    placeholders trained with the usual position-decayed objective. Slots 0
+    and 1 receive no draft loss. The verifier, its MTP block, and the LM head
+    stay frozen; only the DFlash layers and the fusion module train.
+    """
+
+    config_class: ClassVar[type[DMTPSpeculatorConfig]] = DMTPSpeculatorConfig  # type: ignore[misc,assignment]
+
+    def __init__(self, config: DMTPSpeculatorConfig) -> None:
+        self._validate_dmtp_config(config)
+        super().__init__(config=config)
+        self._init_mtp_first_token(config)
+
     @classmethod
     def from_training_args(
         cls,
@@ -161,36 +216,12 @@ class DMTPDraftModel(DFlashDraftModel):
         **kwargs,
     ) -> "DMTPDraftModel":
         """Create a D-MTP model; the verifier must carry native mtp.* weights."""
-        mtp_transformer_config = get_verifier_config(
-            kwargs["verifier_name_or_path"],
-            trust_remote_code=kwargs.get("trust_remote_code", False),
-        )
         config = DMTPSpeculatorConfig(
             **cls._build_base_config_kwargs("dmtp", verifier_config, **kwargs),
-            mtp_transformer_config=mtp_transformer_config,
+            mtp_transformer_config=cls._resolve_mtp_transformer_config(kwargs),
         )
         model = cls(config=config)
-
-        from speculators.convert.mtp.converter import MTPConverter  # noqa: PLC0415
-
-        mtp_state_dict = MTPConverter().convert_to_state_dict(
-            kwargs["verifier_name_or_path"]
-        )
-        missing, unexpected = model.load_state_dict(mtp_state_dict, strict=False)
-        if unexpected:
-            raise ValueError(
-                f"Verifier MTP weights contain unexpected keys: {unexpected}"
-            )
-        loaded = set(mtp_state_dict)
-        not_loaded = [
-            name
-            for name, _ in model.mtp_layers.named_parameters(prefix="mtp_layers")
-            if name not in loaded
-        ]
-        if not_loaded:
-            raise ValueError(f"Verifier MTP weights are missing keys for: {not_loaded}")
-        model.mtp_layers.requires_grad_(False)
-
+        cls._load_frozen_mtp_weights(model, kwargs["verifier_name_or_path"])
         model.load_vocab_mappings(t2d, d2t)
         model.load_verifier_weights()
         return model

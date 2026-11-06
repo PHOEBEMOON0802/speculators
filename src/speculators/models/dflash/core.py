@@ -248,7 +248,7 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
             if sample_from_anchor_arg is None
             else sample_from_anchor_arg
         )
-        default_non_causal = algorithm == "dflash2"
+        default_non_causal = algorithm in {"dflash2", "dmtp2"}
         non_causal_arg = kwargs.get("sliding_window_non_causal")
         sliding_window_non_causal = (
             default_non_causal if non_causal_arg is None else non_causal_arg

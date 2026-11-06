@@ -35,6 +35,24 @@ All other DFlash parameters apply unchanged. **Requirement:** the verifier must 
 
 The training-time `eal` metric measures the DFlash continuation (slots 2+) conditioned on T1; T1's own acceptance is governed by the frozen MTP and is an inference-side quantity.
 
+## D-MTP2 and Warm-Starting
+
+**D-MTP2** (`--speculator-type dmtp2`) pairs the same frozen-MTP first-token path with the [DFlash2](dflash2.md) backbone (local dynamic convolutions + predecessor-conditioned candidate selector). The two mechanisms are complementary: D-MTP fixes the first token, DFlash2 improves within-block decay. Its training defaults mirror dflash2 (KL loss, fixed exponential decay, bidirectional sliding-window blocks); all dflash and dflash2 flags apply.
+
+Because the D-MTP trunk *is* the DFlash trunk (and D-MTP2's is the DFlash2 trunk), a trained DFlash-family checkpoint can warm-start the corresponding D-MTP model — only the fusion module starts fresh and the MTP block comes from the verifier:
+
+```bash
+# dflash -> dmtp (every trunk tensor carries over)
+python -m speculators.convert.dmtp.warmstart <dflash_ckpt> \
+    --verifier <mtp-capable-verifier> --output ./dmtp_warmstart
+
+# dflash2 -> dmtp2 (convolutions and selector carry over too)
+python -m speculators.convert.dmtp.warmstart <dflash2_ckpt> \
+    --verifier <mtp-capable-verifier> --output ./dmtp2_warmstart
+```
+
+Then fine-tune with `--speculator-type dmtp[2] --from-pretrained <output>`. The verifier must be the one the source draft was trained against. `--identity-fusion-init` initializes the fusion projection to `[I; 0]` so slot 1 starts as the T1 token embedding — gentler on a pretrained trunk than a random fusion. A `dflash2 -> dmtp` conversion is also supported (`--target-type dmtp`), dropping the convolutions and selector.
+
 ## Pretrained Models
 
 None released yet. To train your own, see `examples/train/dmtp_qwen3_5_9b_ultrachat_online_5k.sh`.

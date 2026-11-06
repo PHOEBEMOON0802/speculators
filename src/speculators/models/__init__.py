@@ -4,6 +4,7 @@ from .dcore import DCoreDraftModel, DCoreSpeculatorConfig
 from .dflash import DFlashDraftModel, DFlashSpeculatorConfig
 from .dflash2 import DFlash2DraftModel, DFlash2SpeculatorConfig
 from .dmtp import DMTPDraftModel, DMTPSpeculatorConfig
+from .dmtp2 import DMTP2DraftModel, DMTP2SpeculatorConfig
 from .dspark import DSparkDraftModel, DSparkSpeculatorConfig
 from .eagle3 import Eagle3DraftModel, Eagle3SpeculatorConfig
 from .mtp import MTPDraftModel, MTPSpeculatorConfig
@@ -17,6 +18,8 @@ __all__ = [
     "DFlash2SpeculatorConfig",
     "DFlashDraftModel",
     "DFlashSpeculatorConfig",
+    "DMTP2DraftModel",
+    "DMTP2SpeculatorConfig",
     "DMTPDraftModel",
     "DMTPSpeculatorConfig",
     "DSparkDraftModel",

@@ -24,7 +24,7 @@ Adds local dynamic convolutions and a predecessor-conditioned candidate selector
 
 ## [D-MTP](dmtp.md)
 
-Lets the verifier's frozen native MTP module propose the first block token while the DFlash backbone continues the block in parallel, joined by a small token/hidden fusion module. Requires a verifier with native MTP weights.
+Lets the verifier's frozen native MTP module propose the first block token while the DFlash backbone continues the block in parallel, joined by a small token/hidden fusion module. Requires a verifier with native MTP weights. A `dmtp2` variant pairs the same mechanism with the DFlash2 backbone; both can be warm-started from trained DFlash/DFlash2 checkpoints.
 
 ## [DSpark](dspark.md)
 

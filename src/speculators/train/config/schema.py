@@ -737,8 +737,8 @@ class TrainConfig(BaseSettings):
 
     speculator_type: str = Field(
         default="eagle3",
-        description="Type of speculator model to train "
-        "(eagle3, dflash, dcore, dflash2, dmtp, dspark, xpress, peagle, mtp).",
+        description="Type of speculator model to train (eagle3, dflash, dcore, "
+        "dflash2, dmtp, dmtp2, dspark, xpress, peagle, mtp).",
     )
     dry_run: bool = Field(
         default=False,
@@ -806,6 +806,7 @@ class TrainConfig(BaseSettings):
             "dflash",
             "dcore",
             "dmtp",
+            "dmtp2",
             "dspark",
             "dflash2",
             "xpress",
@@ -820,7 +821,10 @@ class TrainConfig(BaseSettings):
         if self.draft.norm_output is None:
             self.draft.norm_output = is_eagle3
         if self.draft.sliding_window_non_causal is None:
-            self.draft.sliding_window_non_causal = self.speculator_type == "dflash2"
+            self.draft.sliding_window_non_causal = self.speculator_type in {
+                "dflash2",
+                "dmtp2",
+            }
         if self.optimizer.muon_lr is None:
             self.optimizer.muon_lr = self.optimizer.lr
         if self.draft.num_layers is None:
