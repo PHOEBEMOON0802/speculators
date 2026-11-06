@@ -77,7 +77,11 @@ def git_sha(repo_root: Path | None) -> str:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],  # noqa: S607
             capture_output=True,
-            text=True,
+            # Git emits UTF-8 regardless of the platform locale; decoding with
+            # the locale codec (text=True alone) raises in the reader thread on
+            # e.g. zh-CN Windows (GBK) and surfaces as stdout=None.
+            encoding="utf-8",
+            errors="replace",
             cwd=repo_root,
             timeout=5,
             check=False,
@@ -95,7 +99,11 @@ def git_diff(repo_root: Path | None, *, timeout: int = 30) -> str:
         result = subprocess.run(
             ["git", "diff", "HEAD"],  # noqa: S607
             capture_output=True,
-            text=True,
+            # Git emits UTF-8 regardless of the platform locale; decoding with
+            # the locale codec (text=True alone) raises in the reader thread on
+            # e.g. zh-CN Windows (GBK) and surfaces as stdout=None.
+            encoding="utf-8",
+            errors="replace",
             cwd=repo_root,
             timeout=timeout,
             check=False,
@@ -111,7 +119,11 @@ def run_git(args: list[str], cwd: str | Path, *, timeout: int = 5) -> str:
         result = subprocess.run(  # noqa: S603
             args,
             capture_output=True,
-            text=True,
+            # Git emits UTF-8 regardless of the platform locale; decoding with
+            # the locale codec (text=True alone) raises in the reader thread on
+            # e.g. zh-CN Windows (GBK) and surfaces as stdout=None.
+            encoding="utf-8",
+            errors="replace",
             cwd=str(cwd),
             timeout=timeout,
             check=False,
