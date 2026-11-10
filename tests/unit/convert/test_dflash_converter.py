@@ -122,6 +122,26 @@ class TestBuildConfig:
         assert config.aux_hidden_state_layer_ids == [3, 11, 19]
 
     @patch("speculators.convert.dflash.converter.PretrainedConfig.get_config_dict")
+    def test_multimodal_verifier_reads_nested_text_config(self, mock_get_config):
+        # Qwen3.5/3.6-MoE ForConditionalGeneration verifiers nest the LM
+        # parameters under text_config; architectures stay top-level.
+        mock_get_config.return_value = (
+            {
+                "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+                "model_type": "qwen3_5_moe",
+                "text_config": {"hidden_size": 4096, "num_hidden_layers": 36},
+            },
+            None,
+        )
+        config = DFlashConverter()._build_config(
+            _source_config(), "Qwen/Qwen3.5-MoE", None
+        )
+        assert config.aux_hidden_state_layer_ids == [2, 10, 18, 26, 34]
+        assert config.speculators_config.verifier.architectures == [
+            "Qwen3_5MoeForConditionalGeneration"
+        ]
+
+    @patch("speculators.convert.dflash.converter.PretrainedConfig.get_config_dict")
     def test_hidden_size_mismatch_raises(self, mock_get_config):
         mock_get_config.return_value = ({"hidden_size": 2048}, None)
         with pytest.raises(ValueError, match="Architecture mismatch"):
