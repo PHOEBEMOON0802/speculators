@@ -1,5 +1,5 @@
-"""DFlash checkpoint conversion utilities."""
+"""DFlash-family checkpoint conversion utilities."""
 
-from speculators.convert.dflash.converter import DFlashConverter
+from speculators.convert.dflash.converter import DFlash2Converter, DFlashConverter
 
-__all__ = ["DFlashConverter"]
+__all__ = ["DFlash2Converter", "DFlashConverter"]

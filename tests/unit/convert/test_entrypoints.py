@@ -29,6 +29,37 @@ class TestMaybeConvertExternalCheckpoint:
         assert mock_convert.call_args.kwargs["algorithm"] == "dflash"
         assert mock_convert.call_args.kwargs["verifier"] == "Qwen/Qwen3-8B"
 
+    @patch("speculators.convert.entrypoints.convert_model")
+    @patch("speculators.convert.entrypoints.PretrainedConfig.get_config_dict")
+    def test_external_dflash2_detected_by_architecture(self, mock_cfg, mock_convert):
+        mock_cfg.return_value = (
+            {
+                "architectures": ["DFlash2DraftModel"],
+                "dflash_config": {"block_size": 8},
+                "model_type": "qwen3",
+            },
+            None,
+        )
+        out = maybe_convert_external_checkpoint(
+            "incoai/Qwen3.6-35B-A3B-DFlash2",
+            verifier="Qwen/Qwen3.6-35B-A3B",
+            output_path="/tmp/out2",
+        )
+        assert out == "/tmp/out2"
+        assert mock_convert.call_args.kwargs["algorithm"] == "dflash2"
+
+    @patch("speculators.convert.entrypoints.convert_model")
+    @patch("speculators.convert.entrypoints.PretrainedConfig.get_config_dict")
+    def test_external_dflash2_detected_by_selector_knobs(self, mock_cfg, mock_convert):
+        mock_cfg.return_value = (
+            {"dflash_config": {"selector_rank": 256}, "model_type": "qwen3"},
+            None,
+        )
+        maybe_convert_external_checkpoint(
+            "some/dflash2-model", verifier="Qwen/Qwen3-8B", output_path="/tmp/out2"
+        )
+        assert mock_convert.call_args.kwargs["algorithm"] == "dflash2"
+
     @patch("speculators.convert.entrypoints.PretrainedConfig.get_config_dict")
     def test_external_without_verifier_raises(self, mock_cfg):
         mock_cfg.return_value = ({"architectures": ["DFlashDraftModel"]}, None)

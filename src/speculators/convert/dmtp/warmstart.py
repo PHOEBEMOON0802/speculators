@@ -11,6 +11,11 @@ validation; this tool rebuilds the config and transfers the weights instead:
         --verifier <mtp-capable verifier> --output <out_dir> \\
         [--target-type dmtp|dmtp2] [--identity-fusion-init]
 
+External (non-speculators) DFlash-family checkpoints -- config.json has a
+``dflash_config`` block instead of ``speculators_model_type`` -- are
+auto-converted to speculators format (against ``--verifier``) before the
+warm start.
+
 The verifier must be the one the source draft was trained against and must
 carry native ``mtp.*`` weights. ``--identity-fusion-init`` initializes the
 fusion projection to ``[I; 0]`` so slot 1 starts as (the RMS-normed) T1 token
@@ -192,6 +197,25 @@ def warmstart(
     """Convert a DFlash(2) checkpoint into a warm-started D-MTP(2) checkpoint."""
     local_path = ensure_checkpoint_is_local(source_path, cache_dir)
     source_config = load_checkpoint_config(local_path)
+    if "speculators_model_type" not in source_config:
+        # External (e.g. z-lab-style) DFlash(2) checkpoint: convert to
+        # speculators format first so the warm start sees a typed config.
+        from speculators.convert.entrypoints import (  # noqa: PLC0415
+            maybe_convert_external_checkpoint,
+        )
+
+        logger.info(
+            "Source %s is not a speculators checkpoint; auto-converting", source_path
+        )
+        local_path = Path(
+            maybe_convert_external_checkpoint(
+                local_path,
+                verifier=verifier,
+                cache_dir=cache_dir,
+                config_dict=source_config,
+            )
+        )
+        source_config = load_checkpoint_config(local_path)
     source_type = source_config.get("speculators_model_type")
     if target_type is None:
         if source_type not in _SOURCE_TO_TARGET:

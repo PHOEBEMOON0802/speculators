@@ -1,7 +1,9 @@
-"""DFlash checkpoint converter.
+"""DFlash-family checkpoint converters.
 
-Converts an external DFlash checkpoint (e.g. ``z-lab/*-DFlash``) to a Speculators
-checkpoint that loads with ``DFlashDraftModel.from_pretrained(path)``.
+Converts an external DFlash checkpoint (e.g. ``z-lab/*-DFlash``) or DFlash2
+checkpoint to a Speculators checkpoint that loads with
+``DFlashDraftModel.from_pretrained(path)`` /
+``DFlash2DraftModel.from_pretrained(path)``.
 
 The draft transformer body (``layers.*``, ``fc``, ``hidden_norm``, ``norm``) already
 matches ``DFlashDraftModel`` so weights are copied as-is. The external checkpoint
@@ -11,6 +13,7 @@ before saving.
 """
 
 from pathlib import Path
+from typing import ClassVar
 
 import torch
 from loguru import logger
@@ -23,9 +26,10 @@ from speculators.convert.utils import (
     load_checkpoint_weights,
 )
 from speculators.models.dflash import DFlashDraftModel, DFlashSpeculatorConfig
+from speculators.models.dflash2 import DFlash2DraftModel, DFlash2SpeculatorConfig
 from speculators.proposals.greedy import GreedyTokenProposalConfig
 
-__all__ = ["DFlashConverter"]
+__all__ = ["DFlash2Converter", "DFlashConverter"]
 
 # config.json keys that are not part of the draft transformer (Qwen3) config
 _NON_TRANSFORMER_KEYS = frozenset(
@@ -53,6 +57,10 @@ class DFlashConverter:
     verifier norm from the verifier model so the saved checkpoint is self-contained.
     """
 
+    algorithm: ClassVar[str] = "dflash"
+    config_class: ClassVar[type[DFlashSpeculatorConfig]] = DFlashSpeculatorConfig
+    model_class: ClassVar[type[DFlashDraftModel]] = DFlashDraftModel
+
     def convert(
         self,
         input_path: str | Path,
@@ -62,7 +70,7 @@ class DFlashConverter:
         aux_hidden_state_layer_ids: list[int] | None = None,
         cache_dir: str | Path | None = None,
     ) -> None:
-        logger.info(f"Converting DFlash checkpoint: {input_path}")
+        logger.info(f"Converting {self.algorithm} checkpoint: {input_path}")
 
         local_checkpoint_path = ensure_checkpoint_is_local(input_path, cache_dir)
         source_config = load_checkpoint_config(local_checkpoint_path)
@@ -126,7 +134,7 @@ class DFlashConverter:
             ]
 
         speculators_config = SpeculatorsConfig(
-            algorithm="dflash",
+            algorithm=self.algorithm,
             proposal_methods=[
                 GreedyTokenProposalConfig(
                     speculative_tokens=block_size - 1,
@@ -139,14 +147,19 @@ class DFlashConverter:
             ),
         )
 
-        return DFlashSpeculatorConfig(
+        return self.config_class(
             transformer_layer_config=transformer_config,  # type: ignore[arg-type]
             draft_vocab_size=transformer_config["vocab_size"],
             block_size=block_size,
             aux_hidden_state_layer_ids=aux_hidden_state_layer_ids,
             mask_token_id=dflash.get("mask_token_id"),
             speculators_config=speculators_config,
+            **self._extra_config_kwargs(dflash),
         )
+
+    def _extra_config_kwargs(self, dflash_config: dict) -> dict:  # noqa: ARG002
+        """Subclass hook for config fields read from ``dflash_config``."""
+        return {}
 
     def _remap_weights(
         self,
@@ -215,7 +228,7 @@ class DFlashConverter:
         weights: dict[str, torch.Tensor],
         output_path: str | Path,
     ) -> Path:
-        model = DFlashDraftModel(config=config)
+        model = self.model_class(config=config)
 
         body = {k: v for k, v in weights.items() if k not in ("t2d", "d2t")}
         body = self._remap_weights(body, config, model)
@@ -239,9 +252,9 @@ class DFlashConverter:
         return Path(output_path)
 
     def _validate(self, output_path: Path) -> None:
-        logger.info("Validating converted DFlash checkpoint...")
+        logger.info(f"Validating converted {self.algorithm} checkpoint...")
         try:
-            model = DFlashDraftModel.from_pretrained(str(output_path))
+            model = self.model_class.from_pretrained(str(output_path))
         except (OSError, ValueError, RuntimeError) as exc:
             logger.error(f"Validation failed: {exc}")
             raise
@@ -249,3 +262,30 @@ class DFlashConverter:
             if torch.isnan(model.state_dict()[name]).any():
                 raise ValueError(f"Converted checkpoint has NaN in {name}")
         logger.success("Validation succeeded")
+
+
+class DFlash2Converter(DFlashConverter):
+    """Convert an external DFlash2 checkpoint to speculators format.
+
+    Same pipeline as :class:`DFlashConverter`; additionally carries over the
+    DFlash2 knobs (dynamic convolutions and candidate selector) from the source
+    checkpoint's ``dflash_config``.
+    """
+
+    algorithm: ClassVar[str] = "dflash2"
+    config_class: ClassVar[type[DFlashSpeculatorConfig]] = DFlash2SpeculatorConfig
+    model_class: ClassVar[type[DFlashDraftModel]] = DFlash2DraftModel
+
+    _DFLASH2_KNOBS: ClassVar[tuple[str, ...]] = (
+        "conv_kernel_size",
+        "conv_group_size",
+        "selector_rank",
+        "selector_top_k",
+    )
+
+    def _extra_config_kwargs(self, dflash_config: dict) -> dict:
+        return {
+            name: dflash_config[name]
+            for name in self._DFLASH2_KNOBS
+            if dflash_config.get(name) is not None
+        }

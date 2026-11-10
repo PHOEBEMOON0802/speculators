@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 import torch
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Config
 
 from speculators.config import SpeculatorsConfig, VerifierConfig
+from speculators.convert import entrypoints
 from speculators.convert.dmtp.warmstart import (
     build_target_config,
     init_identity_fusion,
@@ -158,6 +161,47 @@ def test_identity_fusion_init_passes_through_t1_embedding():
     mtp_hidden = torch.randn(1, 3, HIDDEN_SIZE)
     out = model.fusion(emb, mtp_hidden)
     torch.testing.assert_close(out, model.fusion.emb_norm(emb))
+
+
+def test_warmstart_autoconverts_external_source(monkeypatch, tmp_path):
+    """External (no speculators_model_type) sources are converted, then typed."""
+    # The package re-exports the warmstart *function* under the same name, so
+    # import the module explicitly.
+    ws = importlib.import_module("speculators.convert.dmtp.warmstart")
+
+    external = {
+        "architectures": ["DFlash2DraftModel"],
+        "dflash_config": {"selector_rank": 256},
+    }
+    converted = {"speculators_model_type": "dflash2"}
+    configs = iter([external, converted])
+
+    monkeypatch.setattr(ws, "ensure_checkpoint_is_local", lambda path, cache: tmp_path)
+    monkeypatch.setattr(ws, "load_checkpoint_config", lambda path: next(configs))
+
+    calls: dict = {}
+
+    def fake_convert(model, verifier=None, cache_dir=None, config_dict=None):
+        calls["verifier"] = verifier
+        calls["config_dict"] = config_dict
+        return str(tmp_path / "converted")
+
+    monkeypatch.setattr(entrypoints, "maybe_convert_external_checkpoint", fake_convert)
+
+    class _StopError(Exception):
+        """Raised to end warmstart after type inference succeeded."""
+
+    def fake_verifier_config(*args, **kwargs):
+        raise _StopError
+
+    monkeypatch.setattr(ws, "get_verifier_config", fake_verifier_config)
+
+    # Reaching get_verifier_config means the dflash2->dmtp2 inference succeeded
+    # on the converted config instead of raising "Cannot infer".
+    with pytest.raises(_StopError):
+        ws.warmstart(tmp_path, verifier="dummy/verifier", output_path=tmp_path / "out")
+    assert calls["verifier"] == "dummy/verifier"
+    assert calls["config_dict"] == external
 
 
 def test_build_target_config_from_source_dict():

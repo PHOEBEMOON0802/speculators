@@ -8,8 +8,9 @@ import torch
 from transformers import Qwen3Config
 
 from speculators.config import SpeculatorsConfig, VerifierConfig
-from speculators.convert.dflash.converter import DFlashConverter
+from speculators.convert.dflash.converter import DFlash2Converter, DFlashConverter
 from speculators.models.dflash import DFlashDraftModel, DFlashSpeculatorConfig
+from speculators.models.dflash2 import DFlash2SpeculatorConfig
 from speculators.proposals.greedy import GreedyTokenProposalConfig
 
 _HIDDEN = 16
@@ -135,6 +136,65 @@ class TestBuildConfig:
         source = _source_config(dflash_config={"mask_token_id": 151669})
         with pytest.raises(ValueError, match="target_layer_ids"):
             DFlashConverter()._build_config(source, "Qwen/Qwen3-8B", None)
+
+
+class TestDFlash2BuildConfig:
+    def _dflash2_source_config(self):
+        # Mirrors an external DFlash2 config.json: DFlash2 knobs live inside
+        # dflash_config next to mask_token_id / target_layer_ids.
+        return _source_config(
+            architectures=["DFlash2DraftModel"],
+            dflash_config={
+                "block_size": 8,
+                "mask_token_id": 248077,
+                "target_layer_ids": [1, 9, 17, 25, 33],
+                "conv_kernel_size": 3,
+                "conv_group_size": 8,
+                "selector_rank": 128,
+                "selector_top_k": 4,
+            },
+            block_size=None,
+        )
+
+    @patch("speculators.convert.dflash.converter.PretrainedConfig.get_config_dict")
+    def test_builds_dflash2_config_with_knobs(self, mock_get_config):
+        mock_get_config.return_value = (
+            {
+                "hidden_size": 4096,
+                "num_hidden_layers": 36,
+                "architectures": ["Qwen3ForCausalLM"],
+            },
+            None,
+        )
+        config = DFlash2Converter()._build_config(
+            self._dflash2_source_config(), "Qwen/Qwen3-8B", None
+        )
+
+        assert isinstance(config, DFlash2SpeculatorConfig)
+        assert config.speculators_model_type == "dflash2"
+        assert config.speculators_config.algorithm == "dflash2"
+        assert config.block_size == 8
+        assert config.mask_token_id == 248077
+        assert config.conv_kernel_size == 3
+        assert config.conv_group_size == 8
+        assert config.selector_rank == 128
+        assert config.selector_top_k == 4
+        assert config.aux_hidden_state_layer_ids == [2, 10, 18, 26, 34]
+
+    @patch("speculators.convert.dflash.converter.PretrainedConfig.get_config_dict")
+    def test_missing_knobs_fall_back_to_defaults(self, mock_get_config):
+        mock_get_config.return_value = (
+            {"hidden_size": 4096, "num_hidden_layers": 36},
+            None,
+        )
+        source = self._dflash2_source_config()
+        for knob in ("conv_kernel_size", "conv_group_size", "selector_rank"):
+            del source["dflash_config"][knob]
+        config = DFlash2Converter()._build_config(source, "Qwen/Qwen3-8B", None)
+        assert config.conv_kernel_size == 2
+        assert config.conv_group_size == 16
+        assert config.selector_rank == 256
+        assert config.selector_top_k == 4
 
 
 class TestRemapWeights:
