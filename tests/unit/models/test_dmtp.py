@@ -84,8 +84,27 @@ def test_fusion_module_matches_manual_computation():
     out = fusion(emb, mtp_hidden)
     assert out.shape == (1, 3, HIDDEN_SIZE)
     expected = torch.cat([fusion.emb_norm(emb), fusion.mtp_norm(mtp_hidden)], dim=-1)
-    expected = expected @ fusion.fusion_proj.weight.T
+    expected = emb + expected @ fusion.fusion_proj.weight.T
     torch.testing.assert_close(out, expected)
+
+
+def test_fusion_zero_init_is_exact_passthrough():
+    """W_init = 0 => e~_T1 == e_T1: the raw embedding pathway is preserved."""
+    fusion = MTPTokenFusion(hidden_size=HIDDEN_SIZE, rms_norm_eps=1e-6)
+    emb = torch.randn(1, 3, HIDDEN_SIZE)
+    mtp_hidden = torch.randn(1, 3, HIDDEN_SIZE)
+    torch.testing.assert_close(fusion(emb, mtp_hidden), emb)
+
+
+def test_fusion_stops_gradient_into_mtp_branch():
+    fusion = MTPTokenFusion(hidden_size=HIDDEN_SIZE, rms_norm_eps=1e-6)
+    torch.nn.init.normal_(fusion.fusion_proj.weight)
+    emb = torch.randn(1, 3, HIDDEN_SIZE, requires_grad=True)
+    mtp_hidden = torch.randn(1, 3, HIDDEN_SIZE, requires_grad=True)
+    fusion(emb, mtp_hidden).sum().backward()
+    assert mtp_hidden.grad is None  # stopgrad(h_MTP)
+    assert emb.grad is not None
+    assert fusion.fusion_proj.weight.grad is not None
 
 
 def test_mtp_block_is_frozen_and_rest_trains():
@@ -201,9 +220,12 @@ def test_full_forward_backward_cpu_smoke():
     assert "eal_sum" in metrics
 
     loss.backward()
-    assert all(
-        p.grad is not None and torch.any(p.grad != 0) for p in model.fusion.parameters()
-    )
+    # With the zero-initialized residual, gradients reach the projection
+    # directly; the norm weights' grads are gated by W (zero at step 0).
+    proj_grad = model.fusion.fusion_proj.weight.grad
+    assert proj_grad is not None
+    assert torch.any(proj_grad != 0)
+    assert all(p.grad is not None for p in model.fusion.parameters())
     attn = model.layers[0].self_attn
     assert attn.q_proj.weight.grad is not None
     assert all(p.grad is None for p in model.mtp_layers.parameters())

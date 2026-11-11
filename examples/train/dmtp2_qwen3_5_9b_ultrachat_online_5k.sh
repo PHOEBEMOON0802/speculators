@@ -54,9 +54,10 @@ CONV_GROUP_SIZE=16
 
 # Optional warm start from a trained DFlash2 checkpoint on the SAME verifier:
 # the convolutions and selector carry over; only the fusion module starts
-# fresh. Leave empty to train from scratch.
+# fresh (zero-initialized residual: the T1 slot starts as the raw token
+# embedding). Leave empty to train from scratch.
 #   python -m speculators.convert.dmtp.warmstart <dflash2_ckpt> \
-#       --verifier "$MODEL" --output ./dmtp2_warmstart --identity-fusion-init
+#       --verifier "$MODEL" --output ./dmtp2_warmstart
 WARMSTART_CKPT=""         # e.g. "./dmtp2_warmstart"
 
 # GPU assignments (online training needs separate GPUs for vLLM and training)

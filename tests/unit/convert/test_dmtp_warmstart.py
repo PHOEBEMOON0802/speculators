@@ -12,7 +12,6 @@ from speculators.config import SpeculatorsConfig, VerifierConfig
 from speculators.convert import entrypoints
 from speculators.convert.dmtp.warmstart import (
     build_target_config,
-    init_identity_fusion,
     transfer_backbone_weights,
 )
 from speculators.models.dflash import DFlashDraftModel, DFlashSpeculatorConfig
@@ -152,15 +151,13 @@ def test_transfer_rejects_unknown_source_keys():
         transfer_backbone_weights(_make_dmtp(), source_sd)
 
 
-def test_identity_fusion_init_passes_through_t1_embedding():
+def test_fresh_fusion_passes_through_t1_embedding():
+    """The zero-initialized residual fusion starts as an exact pass-through."""
     model = _make_dmtp()
-    init_identity_fusion(model)
-    with torch.no_grad():
-        torch.nn.init.ones_(model.fusion.emb_norm.weight)
     emb = torch.randn(1, 3, HIDDEN_SIZE)
     mtp_hidden = torch.randn(1, 3, HIDDEN_SIZE)
     out = model.fusion(emb, mtp_hidden)
-    torch.testing.assert_close(out, model.fusion.emb_norm(emb))
+    torch.testing.assert_close(out, emb)
 
 
 def test_warmstart_autoconverts_external_source(monkeypatch, tmp_path):

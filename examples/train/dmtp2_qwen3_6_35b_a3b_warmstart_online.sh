@@ -66,8 +66,7 @@ if [[ -f "$WARMSTART_CKPT/config.json" ]]; then
 else
     python -m speculators.convert.dmtp.warmstart "$DFLASH2_CKPT" \
         --verifier "$MODEL" \
-        --output "$WARMSTART_CKPT" \
-        --identity-fusion-init
+        --output "$WARMSTART_CKPT"
 fi
 
 echo "=== Step 1: Preparing data ==="

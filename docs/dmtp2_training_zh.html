@@ -159,9 +159,9 @@ D-MTP2 = <strong>D-MTP 的首词路径</strong> + <strong>DFlash2 的主干</str
   </tr>
   <tr>
     <td><code>fusion</code>(MTPTokenFusion)</td>
-    <td><strong>全新模块</strong>(warm-start 时可选 identity 初始化)</td>
+    <td><strong>全新模块</strong>(投影零初始化,起点即恒等透传)</td>
     <td><span class="tag train">训练</span></td>
-    <td>把 T1 的词嵌入和预测它的 MTP hidden 融合成 slot 1 的输入:<br><code>ẽ_T1 = W_f [RMS_e(e_T1) ; RMS_m(h_MTP)]</code></td>
+    <td>零初始化残差:在 T1 的原始词嵌入上叠加 MTP 预测特征<br><code>Δ = W_f[RMS_e(e_T1); RMS_m(sg(h_MTP))], W_f=0</code>;<code>ẽ_T1 = e_T1 + Δ</code></td>
   </tr>
 </table>
 <p class="src">源码:<code>src/speculators/models/dmtp2/core.py</code>、<code>dmtp/core.py</code>(MTPFirstTokenMixin)、<code>dmtp/model_definitions.py</code>(fusion)、<code>dflash2/model_definitions.py</code>(卷积与 selector)</p>
@@ -185,9 +185,10 @@ slot 0 和 slot 1 都是"已知输入",损失只覆盖 slot 2..B−1 的 B−2 �
 <h2><span class="no">4</span>端到端训练流程(在线模式)</h2>
 <div class="flow">
   <div class="flow-step"><strong>Step 0 · Warm-start</strong>(可选但强烈推荐)<br>
-    <code>python -m speculators.convert.dmtp.warmstart &lt;dflash2_ckpt&gt; --verifier &lt;verifier&gt; --output &lt;dir&gt; --identity-fusion-init</code><br>
+    <code>python -m speculators.convert.dmtp.warmstart &lt;dflash2_ckpt&gt; --verifier &lt;verifier&gt; --output &lt;dir&gt;</code><br>
     外部(z-lab 风格)DFlash2 checkpoint 会先自动转换为 speculators 格式;然后迁移全部主干权重(含卷积与 selector)、
-    从 verifier 抽取冻结 MTP 权重、把 fusion 投影初始化为 <code>[I; 0]</code>(起点等价于只看 T1 嵌入,训练中逐渐混入 MTP hidden)。</div>
+    从 verifier 抽取冻结 MTP 权重。fusion 残差投影零初始化,warm-start 起点下 T1 槽位<strong>严格等于原始词嵌入</strong>,
+    主干看到的输入分布与 DFlash2 训练时完全一致,训练中再逐步混入 MTP 特征。</div>
   <div class="flow-arrow">↓</div>
   <div class="flow-step"><strong>Step 1 · 数据准备</strong><br>
     <code>speculators prepare-data</code>:按 verifier 的 tokenizer 把对话数据切成定长 packed 序列。</div>
@@ -223,9 +224,12 @@ slot 0 和 slot 1 都是"已知输入",损失只覆盖 slot 2..B−1 的 B−2 �
 anchor p 的 T1 就是 x<sub>p+1</sub>,所以<strong>预测它的 hidden 位于索引 p−1</strong>,按此取出每个 anchor 的 h_MTP。
 </p>
 <p style="margin:6px 0">
-<strong>融合</strong>:slot 1 先填入<strong>真值 T1</strong>(teacher forcing,即 anchor 的下一个词),它的嵌入被替换为
+<strong>残差融合</strong>:slot 1 先填入<strong>真值 T1</strong>(teacher forcing,即 anchor 的下一个词),其嵌入被增强为
 </p>
-<div class="formula">ẽ_T1 = W_f · [ RMSNorm_e(e_T1) ; RMSNorm_m(h_MTP) ]&nbsp;&nbsp;&nbsp;(2d → d,无 bias)</div>
+<div class="formula">Δ = W_f · [ RMSNorm_e(e_T1) ; RMSNorm_m(stopgrad(h_MTP)) ]&nbsp;&nbsp;(W_f 零初始化)&nbsp;&nbsp;&nbsp;ẽ_T1 = e_T1 + Δ</div>
+<p style="margin:6px 0" class="src">
+零初始化使训练起点严格保留原始词嵌入通路(ẽ_T1 ≡ e_T1),MTP 预测特征随训练逐步引入——这正是它比替换式融合更适合从 DFlash2 权重续训的原因。
+</p>
 </div>
 
 <h3>③ DFlash2 主干前向</h3>

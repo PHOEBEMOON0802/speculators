@@ -9,7 +9,7 @@ validation; this tool rebuilds the config and transfers the weights instead:
 
     python -m speculators.convert.dmtp.warmstart <dflash_or_dflash2_ckpt> \\
         --verifier <mtp-capable verifier> --output <out_dir> \\
-        [--target-type dmtp|dmtp2] [--identity-fusion-init]
+        [--target-type dmtp|dmtp2]
 
 External (non-speculators) DFlash-family checkpoints -- config.json has a
 ``dflash_config`` block instead of ``speculators_model_type`` -- are
@@ -17,10 +17,10 @@ auto-converted to speculators format (against ``--verifier``) before the
 warm start.
 
 The verifier must be the one the source draft was trained against and must
-carry native ``mtp.*`` weights. ``--identity-fusion-init`` initializes the
-fusion projection to ``[I; 0]`` so slot 1 starts as (the RMS-normed) T1 token
-embedding and training gradually mixes in the MTP hidden -- gentler on a
-pretrained trunk than a random fusion.
+carry native ``mtp.*`` weights. The fresh fusion module is a zero-initialized
+residual (``e~_T1 = e_T1 + W[...]``, ``W = 0``), so slot 1 starts as exactly
+the raw T1 token embedding and training gradually folds in the MTP hidden --
+no extra initialization flag is needed for a gentle warm start.
 """
 
 import argparse
@@ -45,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "build_target_config",
-    "init_identity_fusion",
     "transfer_backbone_weights",
     "warmstart",
 ]
@@ -172,17 +171,14 @@ def transfer_backbone_weights(
 
 
 @torch.no_grad()
-def init_identity_fusion(model) -> None:
-    """Initialize ``fusion_proj`` to ``[I; 0]``.
-
-    The fused T1 slot then starts as the RMS-normed T1 token embedding with a
-    zero MTP branch, keeping the pretrained trunk close to its training
-    distribution while the fusion learns to mix in ``h_MTP``.
-    """
-    weight = model.fusion.fusion_proj.weight  # [d, 2d]; input is [emb; mtp]
-    hidden = weight.shape[0]
-    weight.zero_()
-    weight[:, :hidden] = torch.eye(hidden, dtype=weight.dtype, device=weight.device)
+def _check_fusion_is_passthrough(model) -> None:
+    """Sanity-check the fresh fusion residual starts at exact pass-through."""
+    weight = model.fusion.fusion_proj.weight
+    if weight.count_nonzero():
+        raise AssertionError(
+            "Fresh fusion projection is expected to be zero-initialized "
+            "(T1 slot == raw token embedding at warm-start)."
+        )
 
 
 def warmstart(
@@ -190,7 +186,6 @@ def warmstart(
     verifier: str,
     output_path: str | Path,
     target_type: str | None = None,
-    identity_fusion_init: bool = False,
     trust_remote_code: bool = False,
     cache_dir: str | Path | None = None,
 ) -> Path:
@@ -250,9 +245,8 @@ def warmstart(
     t2d, d2t = weights.get("t2d"), weights.get("d2t")
     model.load_vocab_mappings(t2d, d2t)
     model.load_verifier_weights()
-    if identity_fusion_init:
-        init_identity_fusion(model)
-        logger.info("Initialized fusion_proj to [I; 0]")
+    _check_fusion_is_passthrough(model)
+    logger.info("Fusion residual starts at zero (T1 slot == raw token embedding)")
 
     output_path = Path(output_path)
     model.save_pretrained(output_path)
@@ -276,11 +270,6 @@ def main() -> None:
         help="Defaults by source type: dflash->dmtp, dflash2->dmtp2. "
         "dflash2->dmtp drops the convolutions and selector.",
     )
-    parser.add_argument(
-        "--identity-fusion-init",
-        action="store_true",
-        help="Initialize the fusion projection to [I; 0] (T1-embedding start)",
-    )
     parser.add_argument("--trust-remote-code", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -289,7 +278,6 @@ def main() -> None:
         verifier=args.verifier,
         output_path=args.output,
         target_type=args.target_type,
-        identity_fusion_init=args.identity_fusion_init,
         trust_remote_code=args.trust_remote_code,
     )
 

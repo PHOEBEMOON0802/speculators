@@ -10,13 +10,15 @@ Training uses the two-anchor layout `[A, T1, MASK x (B-2)]` (reported equivalent
 
 ### Token/Hidden Fusion
 
-T1's slot embedding is replaced by
+T1's slot embedding is augmented by a zero-initialized residual (the main
+method per the blog's Nov. 9 update):
 
 ```
-e~_T1 = W_f [ RMS_e(e_T1) ; RMS_m(h_MTP) ]
+delta  = W_f [ RMS_e(e_T1) ; RMS_m(stopgrad(h_MTP)) ],   W_f init = 0
+e~_T1  = e_T1 + delta
 ```
 
-where `h_MTP` is the MTP hidden state that *predicted* T1 (not one computed after consuming it) and each input has its own learned RMSNorm before a `2d -> d` projection. During training T1 is the ground-truth next token (teacher forcing) and `h_MTP` is computed on the fly by one frozen-MTP pass over the packed sequence -- the batch already carries everything needed (`verifier_last_hidden_states` + token embeddings), so the data pipeline is unchanged.
+where `h_MTP` is the MTP hidden state that *predicted* T1 (not one computed after consuming it) and each input has its own learned RMSNorm before a `2d -> d` projection. Because `W_f` starts at zero, the T1 slot initially equals the raw token embedding and training gradually folds in the MTP features -- preserving the pretrained embedding pathway, which makes this form better suited to continued fine-tuning from existing DFlash-family weights than a replacement-style fusion. During training T1 is the ground-truth next token (teacher forcing) and `h_MTP` is computed on the fly by one frozen-MTP pass over the packed sequence -- the batch already carries everything needed (`verifier_last_hidden_states` + token embeddings), so the data pipeline is unchanged.
 
 ### What Trains
 
@@ -51,7 +53,7 @@ python -m speculators.convert.dmtp.warmstart <dflash2_ckpt> \
     --verifier <mtp-capable-verifier> --output ./dmtp2_warmstart
 ```
 
-Then fine-tune with `--speculator-type dmtp[2] --from-pretrained <output>`. The verifier must be the one the source draft was trained against. `--identity-fusion-init` initializes the fusion projection to `[I; 0]` so slot 1 starts as the T1 token embedding — gentler on a pretrained trunk than a random fusion. A `dflash2 -> dmtp` conversion is also supported (`--target-type dmtp`), dropping the convolutions and selector.
+Then fine-tune with `--speculator-type dmtp[2] --from-pretrained <output>`. The verifier must be the one the source draft was trained against. The fresh fusion module needs no special initialization: its residual projection starts at zero, so slot 1 begins as exactly the raw T1 token embedding and the MTP features blend in during training. A `dflash2 -> dmtp` conversion is also supported (`--target-type dmtp`), dropping the convolutions and selector.
 
 ## Pretrained Models
 

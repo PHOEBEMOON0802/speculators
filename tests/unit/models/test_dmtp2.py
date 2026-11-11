@@ -125,9 +125,12 @@ def test_full_forward_backward_cpu_smoke():
     assert metrics["eal_total"] > 0
 
     loss.backward()
-    assert all(
-        p.grad is not None and torch.any(p.grad != 0) for p in model.fusion.parameters()
-    )
+    # With the zero-initialized residual, gradients reach the projection
+    # directly; the norm weights' grads are gated by W (zero at step 0).
+    proj_grad = model.fusion.fusion_proj.weight.grad
+    assert proj_grad is not None
+    assert torch.any(proj_grad != 0)
+    assert all(p.grad is not None for p in model.fusion.parameters())
     assert any(
         p.grad is not None and torch.any(p.grad != 0)
         for p in model.candidate_selector.parameters()
