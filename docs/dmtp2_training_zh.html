@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D-MTP2 训练逻辑与流程</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --text: #1f2933;
+    --muted: #616e7c;
+    --accent: #3b5bdb;
+    --accent-soft: #edf2ff;
+    --frozen: #0b7285;
+    --frozen-soft: #e3fafc;
+    --train: #c2255c;
+    --train-soft: #fff0f6;
+    --border: #e4e7eb;
+    --code-bg: #f1f3f5;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+    font-size: 15.5px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 28px 96px; }
+  header { margin-bottom: 40px; }
+  h1 { font-size: 30px; margin: 0 0 8px; letter-spacing: 0.5px; }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 0; }
+  h2 {
+    font-size: 21px; margin: 56px 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent-soft);
+  }
+  h2 .no { color: var(--accent); margin-right: 8px; font-variant-numeric: tabular-nums; }
+  h3 { font-size: 16.5px; margin: 28px 0 10px; }
+  p { margin: 10px 0; }
+  code {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    background: var(--code-bg); border-radius: 4px;
+    padding: 1px 6px; font-size: 0.88em;
+  }
+  pre {
+    background: #212529; color: #e9ecef; border-radius: var(--radius);
+    padding: 16px 20px; overflow-x: auto; font-size: 13px; line-height: 1.65;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 16px 0;
+    background: var(--surface); border-radius: var(--radius); overflow: hidden;
+    font-size: 14px;
+  }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 22px; margin: 16px 0;
+  }
+  .note {
+    border-left: 4px solid var(--accent); background: var(--accent-soft);
+    padding: 12px 18px; border-radius: 0 var(--radius) var(--radius) 0; margin: 16px 0;
+    font-size: 14.5px;
+  }
+  .tag {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    border-radius: 99px; padding: 1px 10px; vertical-align: middle;
+  }
+  .tag.frozen { background: var(--frozen-soft); color: var(--frozen); }
+  .tag.train  { background: var(--train-soft);  color: var(--train); }
+  /* 流程图 */
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+  .flow-step {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 20px; position: relative;
+  }
+  .flow-step strong { color: var(--accent); }
+  .flow-arrow { text-align: center; color: var(--muted); font-size: 18px; line-height: 1.4; }
+  /* 块布局示意 */
+  .block-row { display: flex; gap: 6px; margin: 14px 0; flex-wrap: wrap; }
+  .slot {
+    flex: 1; min-width: 86px; text-align: center; border-radius: 8px;
+    padding: 10px 6px; font-size: 13px; border: 1.5px solid var(--border);
+    background: var(--surface);
+  }
+  .slot .name { font-weight: 700; font-size: 14px; display: block; }
+  .slot .desc { color: var(--muted); font-size: 12px; display: block; margin-top: 2px; }
+  .slot.anchor { border-color: var(--frozen); background: var(--frozen-soft); }
+  .slot.t1     { border-color: var(--accent); background: var(--accent-soft); }
+  .slot.mask   { border-color: var(--train); background: var(--train-soft); }
+  .formula {
+    background: var(--surface); border: 1px dashed var(--accent);
+    border-radius: var(--radius); padding: 12px 20px; margin: 14px 0;
+    font-family: "JetBrains Mono", Consolas, monospace; font-size: 14px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .src { color: var(--muted); font-size: 12.5px; }
+  footer { margin-top: 64px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>D-MTP2 训练逻辑与流程</h1>
+  <p class="subtitle">speculators 库 · 冻结 MTP 首词 + DFlash2 并行续写 + 候选重排 的投机解码草稿模型 · 以 Qwen3.6-35B-A3B 为例</p>
+</header>
+
+<h2><span class="no">1</span>一句话概览</h2>
+<p>
+D-MTP2 = <strong>D-MTP 的首词路径</strong> + <strong>DFlash2 的主干</strong>。
+每个草稿块(block)的第一个草稿词 T1 由 verifier 自带的、<strong>冻结的原生 MTP 模块</strong>提出(首词最难,交给最强的预测器);
+块内其余位置由 <strong>DFlash2 主干一次并行前向</strong>补全(带局部动态卷积),
+并由一个<strong>前驱词条件的候选重排器(candidate selector)</strong>对每个位置的 top-k 候选重新打分。
+两个机制互补:D-MTP 解决"第一个词就错"的问题,DFlash2 改善块内位置越靠后越不准的衰减问题。
+</p>
+<div class="note">
+训练中 <strong>verifier、它的 MTP 块、embedding、LM head 全部冻结</strong>;
+真正更新的只有 DFlash2 草稿层(含动态卷积)、candidate selector、以及一个很小的 fusion 融合模块。
+</div>
+
+<h2><span class="no">2</span>模型组成:谁冻结、谁训练</h2>
+<table>
+  <tr><th>组件</th><th>来源</th><th>状态</th><th>作用</th></tr>
+  <tr>
+    <td><code>mtp_layers</code> + <code>mtp_rotary_emb</code></td>
+    <td>verifier 原生 <code>mtp.*</code> 权重(经 MTPConverter 抽取)</td>
+    <td><span class="tag frozen">冻结</span></td>
+    <td>为每个 anchor 提出 T1 的 hidden(训练时 teacher forcing,只取 hidden)</td>
+  </tr>
+  <tr>
+    <td><code>embed_tokens</code> / <code>lm_head</code> / <code>verifier_lm_head</code> / <code>verifier_norm</code></td>
+    <td>verifier 共享(保存在 checkpoint 中)</td>
+    <td><span class="tag frozen">冻结</span></td>
+    <td>词嵌入、草稿 logits 投影、蒸馏目标(verifier logits)的构造</td>
+  </tr>
+  <tr>
+    <td><code>layers.*</code>(Qwen3DFlash2DecoderLayer ×N)</td>
+    <td>DFlash2 warm-start 迁移 / 随机初始化</td>
+    <td><span class="tag train">训练</span></td>
+    <td>草稿主干;每层在 attention 和 MLP 前后包一对 <code>GroupedDynamicCausalConv</code> 局部动态卷积</td>
+  </tr>
+  <tr>
+    <td><code>fc</code> / <code>hidden_norm</code> / <code>norm</code></td>
+    <td>DFlash2 warm-start 迁移</td>
+    <td><span class="tag train">训练</span></td>
+    <td><code>fc</code> 把 verifier 的多层 aux hidden states 拼接后压回草稿 hidden 维度,作为每层 cross-attention 的 target</td>
+  </tr>
+  <tr>
+    <td><code>candidate_selector</code></td>
+    <td>DFlash2 warm-start 迁移</td>
+    <td><span class="tag train">训练</span></td>
+    <td>双线性打分器:前驱词 codebook × hidden 投影 × 候选词 codebook,对 unary top-k 候选加转移分</td>
+  </tr>
+  <tr>
+    <td><code>fusion</code>(MTPTokenFusion)</td>
+    <td><strong>全新模块</strong>(warm-start 时可选 identity 初始化)</td>
+    <td><span class="tag train">训练</span></td>
+    <td>把 T1 的词嵌入和预测它的 MTP hidden 融合成 slot 1 的输入:<br><code>ẽ_T1 = W_f [RMS_e(e_T1) ; RMS_m(h_MTP)]</code></td>
+  </tr>
+</table>
+<p class="src">源码:<code>src/speculators/models/dmtp2/core.py</code>、<code>dmtp/core.py</code>(MTPFirstTokenMixin)、<code>dmtp/model_definitions.py</code>(fusion)、<code>dflash2/model_definitions.py</code>(卷积与 selector)</p>
+
+<h2><span class="no">3</span>草稿块布局</h2>
+<p>训练把序列中采样出的每个 anchor 位置展开成一个长度为 B(<code>block_size</code>,如 8)的块:</p>
+<div class="block-row">
+  <div class="slot anchor"><span class="name">slot 0 — A</span><span class="desc">anchor:已提交词<br>输入,无损失</span></div>
+  <div class="slot t1"><span class="name">slot 1 — T1</span><span class="desc">MTP 首词(训练用真值)<br>输入,无损失</span></div>
+  <div class="slot mask"><span class="name">slot 2 — MASK</span><span class="desc">草稿位 · 有损失</span></div>
+  <div class="slot mask"><span class="name">slot 3 — MASK</span><span class="desc">草稿位 · 有损失</span></div>
+  <div class="slot mask"><span class="name">…</span><span class="desc">…</span></div>
+  <div class="slot mask"><span class="name">slot B−1 — MASK</span><span class="desc">草稿位 · 有损失</span></div>
+</div>
+<p>
+与普通 DFlash 的 <code>[A, MASK×(B−1)]</code> 不同,D-MTP2 是<strong>双 anchor 布局</strong> <code>[A, T1, MASK×(B−2)]</code>:
+slot 0 和 slot 1 都是"已知输入",损失只覆盖 slot 2..B−1 的 B−2 个续写位。
+推理时一个块产出 B−1 个草稿词(T1 + B−2 个续写)再加 verifier 的 bonus token。
+</p>
+
+<h2><span class="no">4</span>端到端训练流程(在线模式)</h2>
+<div class="flow">
+  <div class="flow-step"><strong>Step 0 · Warm-start</strong>(可选但强烈推荐)<br>
+    <code>python -m speculators.convert.dmtp.warmstart &lt;dflash2_ckpt&gt; --verifier &lt;verifier&gt; --output &lt;dir&gt; --identity-fusion-init</code><br>
+    外部(z-lab 风格)DFlash2 checkpoint 会先自动转换为 speculators 格式;然后迁移全部主干权重(含卷积与 selector)、
+    从 verifier 抽取冻结 MTP 权重、把 fusion 投影初始化为 <code>[I; 0]</code>(起点等价于只看 T1 嵌入,训练中逐渐混入 MTP hidden)。</div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step"><strong>Step 1 · 数据准备</strong><br>
+    <code>speculators prepare-data</code>:按 verifier 的 tokenizer 把对话数据切成定长 packed 序列。</div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step"><strong>Step 2 · vLLM hidden-state 服务</strong><br>
+    <code>python scripts/launch_vllm.py &lt;verifier&gt; --target-layer-ids 2 7 12 17 23 28 33 38</code><br>
+    vLLM 跑一遍 verifier,把指定 aux 层的 hidden states + 最后一层 hidden 流式回传给训练端。
+    <strong>target-layer-ids 必须与草稿 checkpoint 的 <code>aux_hidden_state_layer_ids</code> 一致</strong>(决定 fc 的输入拼接)。</div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step"><strong>Step 3 · 训练</strong><br>
+    <code>torchrun -m speculators.train --speculator-type dmtp2 --from-pretrained &lt;warmstart_dir&gt; ...</code><br>
+    用 <code>--from-pretrained</code> 时模型结构(层数、block_size、卷积、selector、aux 层)全部来自 checkpoint;
+    CLI 只控制运行时旋钮(lr、epochs、<code>--max-anchors</code>、selector loss 系数等)。</div>
+</div>
+<p class="src">现成脚本:<code>examples/train/dmtp2_qwen3_6_35b_a3b_warmstart_online.sh</code>(本仓库,四步全包)</p>
+
+<h2><span class="no">5</span>单个训练步的前向细节</h2>
+<p>输入(来自 vLLM):packed 序列的 <code>input_ids</code>、aux 层拼接 hidden <code>hidden_states</code>、最后一层 hidden <code>verifier_last_hidden_states</code>、<code>loss_mask</code>、<code>document_ids</code>。</p>
+
+<h3>① Anchor 采样与注意力掩码</h3>
+<p>
+从 loss_mask 有效、且不跨文档边界的位置中采样至多 <code>max_anchors</code> 个 anchor。
+每个 anchor 展开成一个 B 长的块,拼在原序列之后。块内使用<strong>双向(非因果)滑窗注意力</strong>
+(<code>sliding_window_non_causal=True</code>),块对上下文则做跨文档隔离的因果 cross-attention。
+</p>
+
+<h3>② 构造块输入(D-MTP2 的关键差异点)</h3>
+<p>slot 0 填 anchor 词嵌入,slot 2+ 填 <code>mask_token_id</code> 的嵌入;slot 1 走 fusion 路径:</p>
+<div class="card">
+<p style="margin:6px 0">
+<strong>冻结 MTP 前向</strong>(<code>_compute_mtp_hidden</code>,no_grad):对整条 packed 序列做一次因果 MTP pass——
+输出位置 t 由 verifier hidden h<sub>t</sub> 和词 x<sub>t+1</sub> 的嵌入算出,预测 x<sub>t+2</sub>。
+anchor p 的 T1 就是 x<sub>p+1</sub>,所以<strong>预测它的 hidden 位于索引 p−1</strong>,按此取出每个 anchor 的 h_MTP。
+</p>
+<p style="margin:6px 0">
+<strong>融合</strong>:slot 1 先填入<strong>真值 T1</strong>(teacher forcing,即 anchor 的下一个词),它的嵌入被替换为
+</p>
+<div class="formula">ẽ_T1 = W_f · [ RMSNorm_e(e_T1) ; RMSNorm_m(h_MTP) ]&nbsp;&nbsp;&nbsp;(2d → d,无 bias)</div>
+</div>
+
+<h3>③ DFlash2 主干前向</h3>
+<p>
+verifier 的 aux hidden 先经 <code>fc</code> 压缩成 target hidden。每个草稿层:
+输入 LayerNorm → <code>attention_conv.prepare</code>(块内因果动态卷积)→ 对 target hidden 做 cross-attention
+→ <code>attention_conv.finish</code> → 残差;MLP 一侧同理包在 <code>mlp_conv</code> 里。
+卷积核 = 静态 base kernel + 由当前 hidden 投影出的逐词 delta,分组共享(<code>conv_group_size</code>),
+初始化为恒等变换(warm-start 迁移后保留训练值)。最后 <code>norm</code> + <code>lm_head</code> 得到每个块位置的 unary logits。
+</p>
+
+<h3>④ 蒸馏目标</h3>
+<p>
+目标不是 one-hot 真值,而是 <strong>verifier 的完整 logits 分布</strong>:
+<code>targets = verifier_lm_head(verifier_norm(h_last))</code>,按"块内位置 i 预测序列位置 anchor+i 的下一个词"对齐(整体 roll 1)。
+默认损失为 KL 散度(可配 <code>--loss-fn</code>)。
+</p>
+
+<h3>⑤ Selector 打分</h3>
+<p>
+对每个草稿位取 unary logits 的 top-k(<code>selector_top_k</code>,如 16)候选;若真值不在候选中,按
+<code>selector_miss_policy=replace</code> 把最后一名替换为真值(仅训练时)。selector 对候选加转移分:
+</p>
+<div class="formula">score(c) = unary_logit(c) + ⟨ P[prev] ⊙ W_h·h , S[c] ⟩&nbsp;&nbsp;&nbsp;(P/S 为词表级 codebook,秩 = selector_rank)</div>
+<p>其中 prev 是该位置的前驱词(块内左移一位,teacher forcing)。</p>
+
+<h2><span class="no">6</span>损失函数</h2>
+<div class="formula">L = L_unary + α · L_selector&nbsp;&nbsp;&nbsp;(α = selector_loss_alpha,默认 1.0;slot 0/1 损失恒为 0)</div>
+<table>
+  <tr><th>项</th><th>内容</th></tr>
+  <tr>
+    <td><strong>L_unary</strong></td>
+    <td>草稿 logits 对 verifier logits 的 KL 蒸馏,逐位置加权。权重两种模式:<br>
+    · <code>fixed-exp-decay</code>(默认):slot 1 起权重 <code>exp(−(pos−1)/γ)</code>,γ=<code>dflash_decay_gamma</code>(默认 4);<br>
+    · <code>dpace</code>(D-PACE):用每个位置的即时置信度 q=exp(−CE) 做块内累乘,按"前面全部被接受的概率"加权
+    (<code>dpace_alpha</code> 平滑),让损失聚焦在实际可达的位置上。</td>
+  </tr>
+  <tr>
+    <td><strong>L_selector</strong></td>
+    <td>top-k 候选上的交叉熵(目标 = 真值在候选中的位置),同样做位置衰减加权;
+    <code>strict</code> 模式下真值不在候选中的位置不计损失,<code>replace</code> 模式下替换后全部计入。</td>
+  </tr>
+</table>
+
+<h2><span class="no">7</span>训练监控指标</h2>
+<table>
+  <tr><th>指标</th><th>含义</th></tr>
+  <tr><td><code>eal</code></td><td><strong>头号指标</strong>:realized selector-path 期望接受长度——以 T1 给定为条件,selector 实际选中的词与真值的逐位匹配连续长度(从 slot 2 起)+ bonus。</td></tr>
+  <tr><td><code>position_i_acc</code></td><td>块内第 i 位的 unary argmax 准确率,直接反映位置衰减曲线。</td></tr>
+  <tr><td><code>unary_candidate_recall_at_k</code></td><td>真值落在 unary top-k 候选内的比例(selector 的天花板)。</td></tr>
+  <tr><td><code>teacher_forced_selector_acc</code></td><td>候选包含真值时,selector 选对的比例。</td></tr>
+  <tr><td><code>unary_top_k_oracle_accepted_length</code></td><td>假设 selector 完美时的接受长度上限(诊断瓶颈在 unary 还是 selector)。</td></tr>
+  <tr><td><code>unary_loss / selector_loss</code></td><td>两个损失项分量。</td></tr>
+</table>
+
+<h2><span class="no">8</span>关键超参(Qwen3.6-35B-A3B 实例)</h2>
+<table>
+  <tr><th>参数</th><th>值</th><th>说明</th></tr>
+  <tr><td><code>block_size</code></td><td>8</td><td>bonus + T1 + 6 个续写位;来自 warm-start checkpoint</td></tr>
+  <tr><td><code>draft_vocab_size</code></td><td>248320</td><td><strong>必须等于 verifier 词表</strong>(selector 在全词表 LM head 上重排)</td></tr>
+  <tr><td><code>target-layer-ids</code></td><td>2 7 12 17 23 28 33 38</td><td>z-lab <code>target_layer_ids [1,6,...,37]</code> +1 换算;vLLM 隐式追加最后一层(40)</td></tr>
+  <tr><td>草稿层数</td><td>6</td><td>来自 DFlash2 checkpoint</td></tr>
+  <tr><td><code>conv_kernel_size / conv_group_size</code></td><td>2 / 16</td><td>动态卷积 taps / 每核共享通道数</td></tr>
+  <tr><td><code>selector_rank / selector_top_k</code></td><td>256 / 16</td><td>codebook 秩 / 重排候选数</td></tr>
+  <tr><td><code>max_anchors</code></td><td>3072</td><td>每步采样的块数(运行时旋钮)</td></tr>
+  <tr><td><code>lr / epochs</code></td><td>3e-4 / 3</td><td>模板默认,按数据规模调整</td></tr>
+</table>
+<div class="note">
+<strong>硬性要求</strong>:① verifier 必须自带原生 <code>mtp.*</code> 权重(Qwen3.6-35B-A3B 的
+<code>text_config.mtp_num_hidden_layers=1</code> 满足);② 全词表草稿(不支持 draft-vocab 裁剪);
+③ warm-start 源必须是 <strong>dflash2</strong> checkpoint(其卷积与 selector 在 dflash 一代里没有对应物)。
+</div>
+
+<h2><span class="no">9</span>推理时的对应语义</h2>
+<p>
+部署后每个解码步:verifier 正常前向并产出 bonus token 作为新 anchor → 冻结 MTP 块用 verifier hidden 提出 T1
+→ DFlash2 主干以 <code>[A, T1, MASK×(B−2)]</code> 一次并行前向补全 → 每个续写位取 unary top-k、
+selector 以左侧已选词为前驱重排、取最高分 → B−1 个草稿词交 verifier 一次验证,接受最长匹配前缀。
+训练中的 <code>eal</code> 直接估计这条路径的期望接受长度。
+</p>
+
+<h2><span class="no">10</span>源码索引</h2>
+<table>
+  <tr><th>文件</th><th>内容</th></tr>
+  <tr><td><code>src/speculators/models/dmtp2/core.py</code></td><td>DMTP2DraftModel:forward、trainer kwargs</td></tr>
+  <tr><td><code>src/speculators/models/dmtp/core.py</code></td><td>MTPFirstTokenMixin:冻结 MTP、fusion、块输入构造</td></tr>
+  <tr><td><code>src/speculators/models/dmtp/model_definitions.py</code></td><td>MTPTokenFusion 融合模块</td></tr>
+  <tr><td><code>src/speculators/models/dflash2/model_definitions.py</code></td><td>动态卷积、Qwen3DFlash2DecoderLayer、CandidateSelector</td></tr>
+  <tr><td><code>src/speculators/models/dflash/core.py</code></td><td>_backbone_forward:anchor 采样、注意力布局、蒸馏目标</td></tr>
+  <tr><td><code>src/speculators/models/dmtp2/metrics.py</code></td><td>unary+selector 联合损失与全部指标</td></tr>
+  <tr><td><code>src/speculators/losses/utils.py</code></td><td>fixed-exp-decay 与 D-PACE 位置权重</td></tr>
+  <tr><td><code>src/speculators/convert/dmtp/warmstart.py</code></td><td>DFlash2 → D-MTP2 warm-start(含外部格式自动转换)</td></tr>
+  <tr><td><code>examples/train/dmtp2_qwen3_6_35b_a3b_warmstart_online.sh</code></td><td>端到端训练脚本</td></tr>
+</table>
+
+<footer>
+  生成于 2026-11-10 · 基于 speculators 仓库 feat/dmtp 分支源码整理
+</footer>
+
+</div>
+</body>
+</html>
