@@ -182,8 +182,18 @@ class MTPFirstTokenMixin:
         )
         t1_embeddings = noise_embedding[:, 1 :: self.block_size]
         fused = self.fusion(t1_embeddings, mtp_hidden.to(t1_embeddings.dtype))
-        noise_embedding[:, 1 :: self.block_size] = fused
-        return noise_embedding
+        # Out-of-place write: an in-place slice assignment would fail when the
+        # frozen embedding output is a leaf that HF's input-require-grads hook
+        # (installed by gradient_checkpointing_enable) flips to requires_grad.
+        slot_indices = torch.arange(
+            1,
+            noise_embedding.shape[1],
+            self.block_size,
+            device=noise_embedding.device,
+        )
+        return noise_embedding.index_copy(
+            1, slot_indices, fused.to(noise_embedding.dtype)
+        )
 
 
 @SpeculatorModel.register("dmtp")
